@@ -26,6 +26,7 @@ class ContentType(IntEnum):
     visitor_group_area_membership = 117
     current_company_profile = 118
     mobile_attendance_device = 121
+    mobile_attendance_self_service_device = 122
 
     raw_attendance = 200
     daily_overtime_data = 202
