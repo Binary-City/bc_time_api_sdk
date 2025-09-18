@@ -11,6 +11,7 @@ from .api.objects.company_profiles import CompanyProfiles
 from .api.objects.controllers import Controllers
 from .api.objects.devices import Devices
 from .api.objects.employees import Employees
+from .api.objects.mobile_attendance_self_service_devices import MobileAttendanceSelfServiceDevices
 from .api.objects.employee_leave import EmployeeLeave
 from .api.objects.settings import Settings
 from .api.objects.raw_attendance import RawAttendance
@@ -18,3 +19,5 @@ from .api.objects.visitors import Visitors
 from .api.objects.visitor_groups import VisitorGroups
 from .api.objects.daily_overtime_data import DailyOvertimeData
 from .api.objects.period_overtime_data import PeriodOvertimeData
+from .api.objects.visitor_security_area_occupants_data import VisitorSecurityAreaOccupantsData
+from .api.objects.users import Users
