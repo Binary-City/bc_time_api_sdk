@@ -17,6 +17,7 @@ class ContentType(IntEnum):
     security_details = 250
     security_area_duration = 252 # How much time spent in area(s).
     visitor_security_details = 350
+    visitor_security_area_occupant = 351
     visitor_security_area_duration = 352 # How much time spent in area(s).
     controller = 111
     company_profile_user_membership = 114
@@ -24,6 +25,9 @@ class ContentType(IntEnum):
     visitor_group_membership = 116
     visitor_group_area_membership = 117
     current_company_profile = 118
+    mobile_attendance_device = 121
+    mobile_attendance_self_service_device = 122
+
     raw_attendance = 200
     daily_overtime_data = 202
     period_overtime_data = 203
