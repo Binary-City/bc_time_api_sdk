@@ -11,6 +11,7 @@ from .api.objects.company_profiles import CompanyProfiles
 from .api.objects.controllers import Controllers
 from .api.objects.devices import Devices
 from .api.objects.employees import Employees
+from .api.objects.mobile_attendance_devices import MobileAttendanceDevices
 from .api.objects.mobile_attendance_self_service_devices import MobileAttendanceSelfServiceDevices
 from .api.objects.employee_leave import EmployeeLeave
 from .api.objects.settings import Settings

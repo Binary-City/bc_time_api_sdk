@@ -34,6 +34,7 @@ crypt_key = YOUR_CRYPT_KEY
 grant_type = YOUR_GRANT_TYPE ; authorisation_code | client_credentials | urn:ietf:params:oauth:grant-type:jwt-bearer
 private_key_file_path = FILE_PATH_TO_YOUR_PRIVATE_KEY
 time_domain = BETA_OR_OTHER_NON_PRODUCTION_TIME_DOMAIN ; Optional.
+timeout = 30 ; Optional; the no. of seconds to wait for HTTP responses from the API (defaults to 30).
 ~~~
 
 ## How to create a private/public key pair
@@ -60,7 +61,8 @@ You also have the option to specify your credentials via the constructor of the 
                 client_id='YOUR_CLIENT_ID',
                 client_secret='YOUR_CLIENT_SECRET',
                 crypt_key='YOUR_CRYPT_KEY',
-                grant_type='YOUR_GRANT_TYPE' # Consider using the bc_time.GrantType constants, for example bc_time.GrantType.CLIENT_CREDENTIALS
+                grant_type='YOUR_GRANT_TYPE', # Consider using the bc_time.GrantType constants, for example bc_time.GrantType.CLIENT_CREDENTIALS
+                timeout=30 # Optional; the no. of seconds to wait for HTTP responses from the API (defaults to 30).
         )
 >>> visitors = bc_time.Visitors(api)
 >>> response_data = visitors.get_all_using_pagination()
@@ -107,11 +109,15 @@ Using grant type, password (constant, bc_time.GrantType.USER_CREDENTIALS):
 * DailyOvertimeData
 * Employees
 * EmployeeLeave
+* MobileAttendanceDevices
+* MobileAttendanceSelfServiceDevices
 * PeriodOvertimeData
 * RawAttendance
 * Settings
+* Users
 * Visitors
 * VisitorGroups
+* VisitorSecurityAreaOccupantsData
 
 # Available methods
 
@@ -136,6 +142,24 @@ All methods will return a Dictionary that - depending on the response - may cont
 * data
 
 Status IDs can be referenced using the enumerator bc_time.RequestStatus.
+
+# Error handling
+Every API method always returns a Dictionary with a status key - also on failure - so the pattern below is safe for all outcomes:
+~~~
+>>> response_data = employees.get_all_using_pagination()
+>>> if response_data['status'] == bc_time.RequestStatus.success:
+                ... # Process response_data['data'].
+>>> else:
+                print(response_data['status'], response_data.get('error_description'))
+~~~
+
+When the failure was detected by the SDK itself (rather than reported by the API), the Dictionary also contains an error_description key explaining what went wrong. Notable statuses:
+* bc_time.RequestStatus.no_response - the API could not be reached (no connection, DNS failure, or the request timed out).
+* bc_time.RequestStatus.response_invalid - the API responded with an HTTP status other than 200.
+* bc_time.RequestStatus.response_json_invalid - the response could not be parsed (or decrypted) as JSON; if a crypt_key is configured, verify that it is correct.
+* bc_time.RequestStatus.data_invalid - credentials are missing or incomplete for the configured grant_type, or the private key file could not be read.
+
+An incorrectly sized crypt_key raises a ValueError immediately, as that is a configuration mistake best caught early. Diagnostic details (such as decryption failures) are logged to the 'bc_time' logger via Python's standard logging module.
 
 
 # Documentation

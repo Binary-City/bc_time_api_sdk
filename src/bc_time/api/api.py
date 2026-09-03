@@ -1,14 +1,19 @@
 from os.path import exists as path_exists
 from pathlib import Path
 from json import dumps as json_dumps
-from requests import post as requests_post, get as requests_get, codes as requests_status_codes
-from configparser import ConfigParser
+from logging import getLogger
+from requests import codes as requests_status_codes
+from requests.exceptions import RequestException
+from configparser import ConfigParser, Error as ConfigParserError
 from bc_time.system.encryption.crypt import Crypt
 from bc_time.system.validate import Validate
 from bc_time.requests.base import Base as RequestsBase
 from bc_time.oauth2.token import Token
 from bc_time.api.constants.api import Api as ApiConstant
 from bc_time.api.enumerators.content_type import ContentType
+from bc_time.api.enumerators.request_status import RequestStatus
+
+logger = getLogger('bc_time')
 
 class Api(RequestsBase):
     # Private
@@ -23,6 +28,7 @@ class Api(RequestsBase):
     code = None
     private_key_file_path = None
     time_domain = None
+    timeout = ApiConstant.DEFAULT_REQUEST_TIMEOUT
 
     @property
     def oauth2_token_url(self) -> str:
@@ -43,7 +49,7 @@ class Api(RequestsBase):
         return self.__crypt
 
     @property
-    def token(self):
+    def token(self) -> Token:
         if self.__token is None:
             self.__token = Token(
                 client_id=self.client_id,
@@ -52,11 +58,12 @@ class Api(RequestsBase):
                 grant_type=self.grant_type,
                 code=self.code,
                 private_key_file_path=self.private_key_file_path,
-                oauth2_token_url=self.oauth2_token_url
+                oauth2_token_url=self.oauth2_token_url,
+                timeout=self.timeout
             )
         return self.__token
 
-    def __init__(self, client_id: str=None, client_secret: str=None, crypt_key: str=None, grant_type: str=None, code: str=None, private_key_file_path: str=None, time_domain: str=None) -> None:
+    def __init__(self, client_id: str=None, client_secret: str=None, crypt_key: str=None, grant_type: str=None, code: str=None, private_key_file_path: str=None, time_domain: str=None, timeout: float=None) -> None:
         self.__init_config_from_file()
         if client_id is not None:
             self.client_id = client_id
@@ -72,18 +79,30 @@ class Api(RequestsBase):
             self.private_key_file_path = private_key_file_path
         if time_domain is not None:
             self.time_domain = time_domain
+        if timeout is not None:
+            self.timeout = timeout
+        try:
+            self.timeout = float(self.timeout) # The config file yields a str; the constructor may yield an int.
+        except (TypeError, ValueError):
+            logger.warning("Invalid timeout value %r (from the constructor or the config file); falling back to the default of %s seconds.", self.timeout, ApiConstant.DEFAULT_REQUEST_TIMEOUT)
+            self.timeout = ApiConstant.DEFAULT_REQUEST_TIMEOUT
         self.__init_time_domain()
         self.token.crypt = self.crypt
+        self.token.session = self.session
 
     def __init_config_from_file(self, file_path: str='.bc_time/config', section: str='default') -> None:
         time_config_file_path = self.__get_time_config_file_path(file_path=file_path)
         if time_config_file_path is None:
             return
         config_parser = ConfigParser(inline_comment_prefixes=';')
-        config_parser.read(time_config_file_path)
+        try:
+            config_parser.read(time_config_file_path)
+        except ConfigParserError as exception:
+            logger.warning("Could not parse the config file at '%s'; ignoring it: %s", time_config_file_path, exception)
+            return
         if section not in config_parser:
             return
-        config_data_keys_and_attributes = ['client_id', 'client_secret', 'crypt_key', 'grant_type', 'private_key_file_path', 'time_domain']
+        config_data_keys_and_attributes = ['client_id', 'client_secret', 'crypt_key', 'grant_type', 'private_key_file_path', 'time_domain', 'timeout']
         for config_data_key_or_attribute in config_data_keys_and_attributes:
             if config_data_key_or_attribute in config_parser[section]:
                 setattr(
@@ -101,34 +120,13 @@ class Api(RequestsBase):
         return time_config_file_path if path_exists(time_config_file_path) else None
 
     def __init_time_domain(self) -> None:
-        try:
-            if self.time_domain is None:
-                self.time_domain = ApiConstant.TIME_DOMAIN
-            http_secure_type = {
-                'type': self.__get_http_data(secure=True, qualified=True),
-                'length': self.__get_http_data(secure=True, qualified=True, length=True),
-            }
-            http_unsecure_type = {
-                'type': self.__get_http_data(secure=False, qualified=True),
-                'length': self.__get_http_data(secure=False, qualified=True, length=True),
-            }
-            if self.time_domain[0:http_secure_type['length']] != http_secure_type['type'] \
-            and self.time_domain[0:http_unsecure_type['length']] != http_unsecure_type['type']:
-                self.time_domain = http_secure_type['type'] + self.time_domain
-        finally:
-            time_domain_length = len(self.time_domain)
-            if self.time_domain[time_domain_length-1:1] == '/':
-                self.time_domain = self.time_domain[0:time_domain_length-1]
+        if self.time_domain is None:
+            self.time_domain = ApiConstant.TIME_DOMAIN
+        if not self.time_domain.startswith(('https://', 'http://')):
+            self.time_domain = f"https://{self.time_domain}"
+        self.time_domain = self.time_domain.rstrip('/')
 
-    def __get_http_data(self, secure: bool=False, qualified: bool=True, length: bool=False) -> str|int:
-        http_data = 'http'
-        if secure:
-            http_data += 's'
-        if qualified:
-            http_data += '://'
-        return http_data if not length else len(http_data)
-
-    def create(self, content_type_id: ContentType, payload: dict, content_uid: int=None) -> dict:
+    def create(self, content_type_id: ContentType, payload: dict, content_uid: int|str=None) -> dict:
         request_token_result, request_token_response_data = self.token.request_token()
         if not request_token_result:
             return request_token_response_data
@@ -137,13 +135,9 @@ class Api(RequestsBase):
             payload=payload,
             content_uid=content_uid
         )
-        post_response = requests_post(
-            url=self.api_url,
-            data=create_payload
-        )
-        return self._get_response_data(post_response.text) if post_response.status_code == requests_status_codes.ok else None
+        return self.__send_api_request('post', data=create_payload)
 
-    def update(self, content_type_id: ContentType, content_uid: int, payload: dict) -> dict:
+    def update(self, content_type_id: ContentType, content_uid: int|str, payload: dict) -> dict:
         request_token_result, request_token_response_data = self.token.request_token()
         if not request_token_result:
             return request_token_response_data
@@ -152,13 +146,30 @@ class Api(RequestsBase):
             content_uid=content_uid,
             payload=payload
         )
-        post_response = requests_post(
-            url=self.api_url,
-            data=update_payload
-        )
-        return self._get_response_data(post_response.text) if post_response.status_code == requests_status_codes.ok else None
+        return self.__send_api_request('post', data=update_payload)
 
-    def __get_create_or_update_data(self, content_type_id: ContentType, payload: dict, content_uid: int=None) -> dict:
+    def __send_api_request(self, http_method: str, **request_kwargs) -> dict:
+        try:
+            request_response = self.session.request(
+                method=http_method,
+                url=self.api_url,
+                timeout=self.timeout,
+                **request_kwargs
+            )
+        except RequestException as exception:
+            logger.warning("No response from the API: %s", exception)
+            return self._get_error_response_data(
+                request_status=RequestStatus.no_response,
+                error_description=f"No response from the API: {exception}"
+            )
+        if request_response.status_code != requests_status_codes.ok:
+            return self._get_error_response_data(
+                request_status=RequestStatus.response_invalid,
+                error_description=f"The API request failed with HTTP status {request_response.status_code}."
+            )
+        return self._get_response_data(request_response.text)
+
+    def __get_create_or_update_data(self, content_type_id: ContentType, payload: dict, content_uid: int|str=None) -> dict:
         data = {'content_type_id': int(content_type_id)}
         if content_uid: # Will be omitted if performing POST (1 new object).
             data['content_uid'] = content_uid
@@ -176,8 +187,9 @@ class Api(RequestsBase):
         return create_or_update_payload
 
     def get_all_using_pagination(self, content_type_id: ContentType, content_uid: int=ApiConstant.UID_GET_ALL, filters: dict=None, page: int=1, row_count: int=ApiConstant.DEFAULT_ROW_COUNT) -> dict:
-        if not self.token.request_token():
-            return None
+        request_token_result, request_token_response_data = self.token.request_token()
+        if not request_token_result:
+            return request_token_response_data
         request_params = self.__get_request_params(
             content_type_id=content_type_id,
             content_uids=[content_uid],
@@ -185,31 +197,26 @@ class Api(RequestsBase):
             page=page,
             row_count=row_count
         )
-        request_response = requests_get(
-            url=self.api_url,
-            params=request_params
-        )
-        return self._get_response_data(request_response.text) if request_response.status_code == requests_status_codes.ok else None
+        return self.__send_api_request('get', params=request_params)
 
-    def get_one(self, content_type_id: ContentType, content_uid: int) -> dict:
-        if not self.token.request_token():
-            return None
+    def get_one(self, content_type_id: ContentType, content_uid: int|str) -> dict:
+        request_token_result, request_token_response_data = self.token.request_token()
+        if not request_token_result:
+            return request_token_response_data
         request_params = self.__get_request_params(content_type_id, content_uids=[content_uid])
-        request_response = requests_get(
-            url=self.api_url,
-            params=request_params
-        )
-        return self._get_response_data(request_response.text) if request_response.status_code == requests_status_codes.ok else None
+        return self.__send_api_request('get', params=request_params)
 
     def get_many(self, content_type_id: ContentType, content_uids: list) -> dict:
-        if not self.token.request_token():
-            return None
+        if not content_uids:
+            return self._get_error_response_data(
+                request_status=RequestStatus.uid_invalid,
+                error_description="content_uids must contain at least one content UID."
+            )
+        request_token_result, request_token_response_data = self.token.request_token()
+        if not request_token_result:
+            return request_token_response_data
         request_params = self.__get_request_params(content_type_id, content_uids)
-        request_response = requests_get(
-            url=self.api_url,
-            params=request_params
-        )
-        return self._get_response_data(request_response.text) if request_response.status_code == requests_status_codes.ok else None
+        return self.__send_api_request('get', params=request_params)
 
     def __get_request_params(self, content_type_id: ContentType, content_uids: list=None, filters: dict=None, page: int=None, row_count: int=None) -> dict:
         data = {

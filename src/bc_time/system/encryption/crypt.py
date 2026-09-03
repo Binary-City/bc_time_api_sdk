@@ -1,13 +1,17 @@
-from os import urandom as os_urandom
-from base64 import b64encode as base64_encode, b64decode as base64_decode
-from random import choice as random_choice
+from base64 import b64decode as base64_decode, b64encode as base64_encode
+from logging import getLogger
+from secrets import choice as secrets_choice
+from string import ascii_letters, digits
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
+
+logger = getLogger('bc_time')
 
 class Crypt:
     # Contants
     IV_START_VALUES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] # a = 1, b = 2..., A = 9, B = 10..., and etc.
-    KEY_LENGTH = 32 # Not used in this class (only in BC Time), but leaving it here for information sake.
+    KEY_LENGTH = 32 # The key length BC Time issues; AES itself also accepts 16 or 24.
+    VALID_KEY_LENGTHS = (16, 24, 32)
     IV_LENGTH = 16
 
     # Public
@@ -18,13 +22,13 @@ class Crypt:
         self.key = key
         self.data = data
 
-    def encrypt(self) -> str:
+    def encrypt(self) -> str|None:
         if not self.__validate_data():
             return None
+        key = self.__get_validated_key()
         iv, iv_start, iv_end = self.__get_iv_and_start_and_end()
         padder = padding.PKCS7(128).padder()
         data_to_encrypt = padder.update(str.encode(self.data)) + padder.finalize()
-        key = str.encode(self.key)
         iv = str.encode(iv)
         cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
         encryptor = cipher.encryptor()
@@ -34,23 +38,35 @@ class Crypt:
         encrypted_data = iv_start + encrypted_data + iv_end + '='*equal_signs_count # This might result in no equal signs appended.
         return encrypted_data
 
-    def decrypt(self) -> str:
+    def decrypt(self) -> str|None:
         if not self.__validate_data():
             return None
+        key = self.__get_validated_key()
         iv, encrypted_data = self.__extract_iv()
         if iv is None or encrypted_data is None:
             return None
-        encrypted_data = base64_decode(encrypted_data)
-        key = str.encode(self.key)
-        iv = str.encode(iv)
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-        decryptor = cipher.decryptor()
-        decrypted_padded_data = decryptor.update(encrypted_data) + decryptor.finalize()
-        unpadder = padding.PKCS7(128).unpadder()
-        decrypted_data = unpadder.update(decrypted_padded_data) + unpadder.finalize()
-        return str(decrypted_data, 'utf-8')
+        try:
+            encrypted_data = base64_decode(encrypted_data)
+            iv = str.encode(iv)
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+            decryptor = cipher.decryptor()
+            decrypted_padded_data = decryptor.update(encrypted_data) + decryptor.finalize()
+            unpadder = padding.PKCS7(128).unpadder()
+            decrypted_data = unpadder.update(decrypted_padded_data) + unpadder.finalize()
+            return str(decrypted_data, 'utf-8')
+        except ValueError as exception:
+            # Covers invalid base64, block-size mismatches, invalid padding and non-UTF-8 plaintext -
+            # typically an incorrect crypt_key, or data that was corrupted or tampered with in transit.
+            logger.warning("Could not decrypt data - the crypt_key is likely incorrect, or the data was corrupted or tampered with: %s", exception)
+            return None
 
-    def __extract_iv_start_length(self: str) -> tuple[int, str]:
+    def __get_validated_key(self) -> bytes:
+        key = str.encode(self.key)
+        if len(key) not in self.VALID_KEY_LENGTHS:
+            raise ValueError(f"crypt_key must be {', '.join(str(length) for length in self.VALID_KEY_LENGTHS)} bytes long; got {len(key)} bytes. Verify the crypt_key issued to you by BC Time.")
+        return key
+
+    def __extract_iv_start_length(self) -> tuple[int|None, str|None]:
         first_char = self.data[:1]
         if first_char not in self.IV_START_VALUES:
             return None, None
@@ -76,13 +92,8 @@ class Crypt:
         return iv, encrypted_data
 
     def __strip_equal_signs(self, encrypted_data: str) -> tuple[str, int]:
-        equal_signs_count = 0
-        encrypted_data_length = len(encrypted_data)
-        while encrypted_data[encrypted_data_length - 1] == '=':
-            encrypted_data = encrypted_data[:encrypted_data_length - 1]
-            encrypted_data_length = len(encrypted_data)
-            equal_signs_count += 1
-        return encrypted_data, equal_signs_count
+        stripped_data = encrypted_data.rstrip('=')
+        return stripped_data, len(encrypted_data) - len(stripped_data)
 
     def __validate_data(self) -> bool:
         return self.key is not None and self.data is not None
@@ -95,12 +106,8 @@ class Crypt:
         return iv, start, end
 
     def __get_random_iv(self) -> str:
-        iv = base64_encode(os_urandom(24)).decode('utf-8')
-        for search_value in ['+', '/']:
-            iv = iv.replace(search_value, '')
-        iv = iv[:self.IV_LENGTH]
-        return iv if len(iv) == self.IV_LENGTH else None
+        return ''.join(secrets_choice(ascii_letters + digits) for _ in range(self.IV_LENGTH))
 
-    def __get_random_iv_start_length(self):
-        start_value = random_choice(self.IV_START_VALUES)
+    def __get_random_iv_start_length(self) -> int:
+        start_value = secrets_choice(self.IV_START_VALUES)
         return self.IV_START_VALUES.index(start_value) + 1
