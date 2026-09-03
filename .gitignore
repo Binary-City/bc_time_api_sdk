@@ -54,3 +54,4 @@ playing.py
 bc_time_v2_api.egg-info/
 src/bc_time.egg-info/
 key_pairs/
+build/

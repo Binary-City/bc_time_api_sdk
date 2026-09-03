@@ -16,9 +16,9 @@ class RequestStatus(IntEnum):
     user_uid_invalid = 11
     post_batch_data_invalid = 12
     data_empty = 13
-    no_response = 14 # No internet connection, blocked by firewall, etc.; used exclusively by Time Comm.
-    response_invalid = 15 # Http code is anything other than 200 (OK); used exclusively by Time Comm.
-    response_json_invalid = 16 # Used exclusively by Time Comm.
+    no_response = 14 # No internet connection, timeout, blocked by firewall, etc.; also used by Time Comm.
+    response_invalid = 15 # Http code is anything other than 200 (OK); also used by Time Comm.
+    response_json_invalid = 16 # Response could not be parsed (or decrypted) as JSON; also used by Time Comm.
     company_profile_inactive = 17
     cost_plan_overdue = 18
     token_invalid = 19
